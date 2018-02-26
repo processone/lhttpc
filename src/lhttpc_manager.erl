@@ -58,7 +58,8 @@
          terminate/2
         ]).
 
--behaviour(gen_server).
+-define(GEN_SERVER, p1_server).
+-behaviour(?GEN_SERVER).
 
 -include("lhttpc_types.hrl").
 -include("lhttpc.hrl").
@@ -84,7 +85,7 @@
 %%------------------------------------------------------------------------------
 -spec dump_settings(pool_id()) -> list().
 dump_settings(PidOrName) ->
-    gen_server:call(PidOrName, dump_settings).
+    ?GEN_SERVER:call(PidOrName, dump_settings).
 
 %%------------------------------------------------------------------------------
 %% @doc Sets the maximum pool size for the specified pool.
@@ -92,7 +93,7 @@ dump_settings(PidOrName) ->
 %%------------------------------------------------------------------------------
 -spec set_max_pool_size(pool_id(), non_neg_integer()) -> ok.
 set_max_pool_size(PidOrName, Size) when is_integer(Size), Size > 0 ->
-    gen_server:cast(PidOrName, {set_max_pool_size, Size}).
+    ?GEN_SERVER:cast(PidOrName, {set_max_pool_size, Size}).
 
 %%------------------------------------------------------------------------------
 %% @doc Lists all the pools already started.
@@ -119,7 +120,7 @@ list_pools() ->
 %%------------------------------------------------------------------------------
 -spec client_count(pool_id()) -> non_neg_integer().
 client_count(PidOrName) ->
-    gen_server:call(PidOrName, client_count).
+    ?GEN_SERVER:call(PidOrName, client_count).
 
 %%------------------------------------------------------------------------------
 %% @spec (PoolPidOrName) -> Count
@@ -130,7 +131,7 @@ client_count(PidOrName) ->
 %%------------------------------------------------------------------------------
 -spec connection_count(pool_id()) -> non_neg_integer().
 connection_count(PidOrName) ->
-    gen_server:call(PidOrName, connection_count).
+    ?GEN_SERVER:call(PidOrName, connection_count).
 
 %%------------------------------------------------------------------------------
 %% @spec (PoolPidOrName, Destination) -> Count
@@ -147,7 +148,7 @@ connection_count(PidOrName) ->
 -spec connection_count(pool_id(), destination()) -> non_neg_integer().
 connection_count(PidOrName, {Host, Port, Ssl}) ->
     Destination = {string:to_lower(Host), Port, Ssl},
-    gen_server:call(PidOrName, {connection_count, Destination}).
+    ?GEN_SERVER:call(PidOrName, {connection_count, Destination}).
 
 %%------------------------------------------------------------------------------
 %% @spec (PoolPidOrName, Timeout) -> ok
@@ -160,7 +161,7 @@ connection_count(PidOrName, {Host, Port, Ssl}) ->
 %%------------------------------------------------------------------------------
 -spec update_connection_timeout(pool_id(), non_neg_integer()) -> ok.
 update_connection_timeout(PidOrName, Milliseconds) ->
-    gen_server:cast(PidOrName, {update_timeout, Milliseconds}).
+    ?GEN_SERVER:cast(PidOrName, {update_timeout, Milliseconds}).
 
 %%------------------------------------------------------------------------------
 %% @spec () -> {ok, pid()}
@@ -181,11 +182,12 @@ start_link() ->
     {ok, pid()} | {error, already_started}.
 start_link(Options0) ->
     Options = maybe_apply_defaults([connection_timeout, pool_size], Options0),
+    ServerOpts = [{max_queue, 1000}],
     case proplists:get_value(name, Options) of
         undefined ->
-            gen_server:start_link(?MODULE, Options, []);
+            ?GEN_SERVER:start_link(?MODULE, Options, ServerOpts);
         Name ->
-            gen_server:start_link({local, Name}, ?MODULE, Options, [])
+            ?GEN_SERVER:start_link({local, Name}, ?MODULE, Options, ServerOpts)
     end.
 
 %%------------------------------------------------------------------------------
@@ -198,7 +200,7 @@ start_link(Options0) ->
                         socket() | 'no_socket'.
 ensure_call(Pool, Pid, Host, Port, Ssl, Options) ->
     SocketRequest = {socket, Pid, Host, Port, Ssl},
-    try gen_server:call(Pool, SocketRequest, infinity) of
+    try ?GEN_SERVER:call(Pool, SocketRequest, infinity) of
         {ok, S} ->
             %% Re-using HTTP/1.1 connections
             S;
@@ -244,7 +246,7 @@ client_done(Pool, Host, Port, Ssl, Socket) ->
     case lhttpc_sock:controlling_process(Socket, Pool, Ssl) of
         ok ->
             DoneMsg = {done, Host, Port, Ssl, Socket},
-            ok = gen_server:call(Pool, DoneMsg, infinity);
+            ok = ?GEN_SERVER:call(Pool, DoneMsg, infinity);
         _ ->
             ok
     end.
@@ -310,7 +312,7 @@ handle_call({connection_count, Destination}, _, State) ->
     end,
     {reply, Count, State};
 handle_call({done, Host, Port, Ssl, Socket}, {Pid, _} = From, State) ->
-    gen_server:reply(From, ok),
+    ?GEN_SERVER:reply(From, ok),
     Dest = {Host, Port, Ssl},
     {Dest, MonRef} = dict:fetch(Pid, State#httpc_man.clients),
     true = erlang:demonitor(MonRef, [flush]),
@@ -356,7 +358,7 @@ handle_info({'DOWN', MonRef, process, Pid, _Reason}, State) ->
         empty ->
             {noreply, State#httpc_man{clients = Clients2}};
         {ok, From, Queues2} ->
-            gen_server:reply(From, no_socket),
+            ?GEN_SERVER:reply(From, no_socket),
             State2 = State#httpc_man{queues = Queues2, clients = Clients2},
             {noreply, monitor_client(Dest, From, State2)}
     end;
@@ -515,7 +517,7 @@ deliver_socket(Socket, {_, _, Ssl} = Dest, State) ->
             lhttpc_sock:setopts(Socket, [{active, false}], Ssl),
             case lhttpc_sock:controlling_process(Socket, PidWaiter, Ssl) of
                 ok ->
-                    gen_server:reply(FromWaiter, {ok, Socket}),
+                    ?GEN_SERVER:reply(FromWaiter, {ok, Socket}),
                     monitor_client(Dest, FromWaiter, State#httpc_man{queues = Queues2});
                 {error, badarg} -> % Pid died, reuse for someone else
                     lhttpc_sock:setopts(Socket, [{active, once}], Ssl),
